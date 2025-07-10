@@ -7,7 +7,7 @@ A lightweight, MQTT-driven irrigation controller based on the ESP-12F.  Control 
 - **MQTT Manual Control**  
   – Topics: `irrigation/control0`, `…/control1`, `…/control2`  
   – Payloads: `on` / `off`  
-- **Weather-Aware Watering**
+- **Weather-Aware Watering**  
   - Home Assistant checks your local rain-probability sensor and skips any “on” if precipitation ≥ your threshold.  
 - **30 min Auto-Off Timeout if no WIFI/MQTT**  
   – Each zone resets its own 30m watchdog on every “on”  
