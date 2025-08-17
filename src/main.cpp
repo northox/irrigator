@@ -2,9 +2,10 @@
 #include <PubSubClient.h>
 #include <Ticker.h>
 
-#define RELAY0_PIN D8  // 15 // GPIO15
-#define RELAY1_PIN D7  // 13 // GPIO13
-#define RELAY2_PIN D6  // 12 // GPIO12
+#define RELAY0_PIN D1  // 05
+#define RELAY1_PIN D2  // 04
+#define RELAY2_PIN D5  // 14
+#define LED_PIN LED_BUILTIN 
 
 const char* ssid = "x";
 const char* password = "y";
@@ -45,9 +46,9 @@ void connectToMQTT() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message = "";
+  String msg = "";
   for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+    msg += (char)payload[i];
   }
 
   int idx = -1;
@@ -74,6 +75,7 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Booting");
 
+  pinMode(LED_PIN, OUTPUT);
   pinMode(RELAY0_PIN, OUTPUT);
   pinMode(RELAY1_PIN, OUTPUT);
   pinMode(RELAY2_PIN, OUTPUT);
@@ -82,10 +84,10 @@ void setup() {
   digitalWrite(RELAY2_PIN, LOW);
   Serial.println("All relays off by default");
 
-  watchdog.attach(5 * 60, watchdogReset); // watchdog: reboot if stuck for more than 5 minutes
+  watchdog.attach(5 * 60, watchdogReset);
 
   WiFi.begin(ssid, password);
-  wifiReconnectTicker.attach(30, checkWiFiConnection); // Check WiFi connection every 30 seconds
+  wifiReconnectTicker.attach(30, checkWiFiConnection);
   Serial.println("Wifi completed");
 
   mqttClient.setServer(mqttServer, mqttPort);
@@ -97,7 +99,7 @@ void setup() {
 }
 
 void loop() {
-  if (!mqttClient.connected()) { // ensure MQTT stays connected
+  if (!mqttClient.connected()) {
     connectToMQTT();
   }
   mqttClient.loop();
@@ -115,5 +117,6 @@ void loop() {
   }
 
   delay(500);
+  digitalWrite(LED_PIN, !digitalRead(LED_PIN));
   Serial.println("Loop");
 }
