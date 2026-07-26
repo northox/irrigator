@@ -1,144 +1,192 @@
 # ESP8266 Irrigation Manager
 
-A lightweight, MQTT-driven irrigation controller based on the ESP-12F.  Control up to three watering zones manually via MQTT (or Home Assistant), schedule them for specific weekdays/times, and Home Assistant will hold off watering if rain is expected.
+A small MQTT-driven irrigation controller built on an ESP-12F / NodeMCU. It
+drives three valve zones, takes its orders from Home Assistant, and refuses to
+leave a valve open if the network goes away.
 
-## Key Features
+## Key features
 
-- **MQTT Manual Control**  
-  – Topics: `irrigation/control0`, `…/control1`, `…/control2`  
-  – Payloads: `on` / `off`  
-- **Weather-Aware Watering**  
-  - Home Assistant checks your local rain-probability sensor and skips any “on” if precipitation ≥ your threshold.  
-- **30 min Auto-Off Timeout if no WIFI/MQTT**  
-  – Each zone resets its own 30m watchdog on every “on”  
-- **Easy Home Assistant Integration**
-  – Pre-built `configuration.yaml` & `automations.yaml` snippets  
-- **Wi-Fi Auto-Reconnect**  
-  – Ticker-driven rejoin every 30s if disconnected  
-- **Hardware Watchdog**
-  – Reboots the ESP if it ever locks up for > 5 min
+- **MQTT control** - topics `irrigation/control0` / `control1` / `control2`,
+  payloads `on` / `off`.
+- **Authenticated broker connection** - the firmware logs in with a username and
+  password. An anonymous connect is rejected by most brokers.
+- **One zone at a time** - Home Assistant enforces mutual exclusion, so opening
+  one valve always closes the other two.
+- **Weather-aware** - the scheduled runs are skipped when the forecast rain
+  probability is 50% or higher.
+- **30 min auto-off watchdog** - each zone closes itself 30 minutes after it was
+  opened, even if Wi-Fi or MQTT dropped in the meantime.
+- **Wi-Fi auto-reconnect** with exponential backoff, capped at 40 s.
+- **Hardware watchdog** - 60 s window; the ESP reboots if it locks up.
+- **Status LED** - solid when a zone is running, fast blink when Wi-Fi is down,
+  medium blink when MQTT is down, slow heartbeat when healthy.
 
-## Prerequisites
+## Hardware
 
-1. **ESP8266** (NodeMCU or bare `ESP-12F`)  
-2. **3-channel relay module** (active LOW) wired to D8/D7/D6 (GPIO 15/13/12)  
-3. **Home Assistant** (Core or OS) with MQTT broker  
-4. **OpenWeatherMap API key** (for rain-probability sensor)
+1. **ESP8266** - NodeMCU 1.0 or a bare ESP-12F.
+2. **3-channel relay module** wired to:
 
-## Home Assistant Integration
+   | Zone | Sketch macro | Pin | GPIO |
+   |------|--------------|-----|------|
+   | 0    | `RELAY0_PIN` | D1  | 5    |
+   | 1    | `RELAY1_PIN` | D2  | 4    |
+   | 2    | `RELAY2_PIN` | D5  | 14   |
 
-### MQTT Switches
+   The sketch drives the relays **active HIGH** (`digitalWrite(pin, HIGH)` opens
+   a valve). If your relay board is active LOW, invert the writes in
+   `mqttCallback()` and `enforceAutoOff()`.
 
-Add to configuration.yaml (or include via switches.yaml):
+3. **An MQTT broker** - e.g. the Mosquitto add-on on Home Assistant.
+4. **An OpenWeatherMap API key** - only needed for the rain check.
 
-```yaml
-mqtt:
-  switch:
-    - name: "Irrigation Zone 0"
-      command_topic: "irrigation/control0"
-      payload_on: "on"
-      payload_off: "off"
-      qos: 1
-      optimistic: true
+## Firmware setup
 
-    - name: "Irrigation Zone 1"
-      command_topic: "irrigation/control1"
-      payload_on: "on"
-      payload_off: "off"
-      qos: 1
-      optimistic: true
+Credentials are kept out of git in `src/config.h`:
 
-    - name: "Irrigation Zone 2"
-      command_topic: "irrigation/control2"
-      payload_on: "on"
-      payload_off: "off"
-      qos: 1
-      optimistic: true
+```sh
+cp src/config.example.h src/config.h
+$EDITOR src/config.h
 ```
 
-Restart HA to expose:
-- switch.irrigation_zone_0
-- switch.irrigation_zone_1
-- switch.irrigation_zone_2
+Fill in your Wi-Fi SSID/password, the broker address, and the MQTT username and
+password. `src/config.h` is in `.gitignore`.
 
-### Weather Sensor
+### Building
 
-In your configuration.yaml (or split into sensors.yaml):
+**PlatformIO** - `pio run -t upload` from the repo root.
 
-```yaml
-weather:
-  - platform: openweathermap
-    api_key: YOUR_OPENWEATHERMAP_API_KEY
-    mode: hourly
-    name: home_weather
+**Arduino IDE** - the IDE requires the sketch folder and the `.ino` to share a
+name, so copy the two files into a folder called `irrigator/`:
 
-sensor:
-  - platform: openweathermap
-    api_key: YOUR_OPENWEATHERMAP_API_KEY
-    monitored_conditions:
-      - precipitation_probability
-    name: rain_probability
+```sh
+mkdir -p ~/Arduino/irrigator
+cp src/irrigator.ino src/config.h ~/Arduino/irrigator/
 ```
 
-This creates:
-- weather.home_weather (hourly forecast)
-- sensor.rain_probability (next-period % chance of rain)
+Then select board *NodeMCU 1.0 (ESP-12E Module)* and upload. Requires the
+`PubSubClient` library.
 
-### Time-Based Automations With Rain Check
+### Putting a bare ESP-12F into flash mode
 
-Place in automations.yaml:
+A NodeMCU-style board with onboard USB handles this automatically - just hit
+upload. A bare module wired to a USB-serial adapter does not:
 
-```yaml
-# Zone 0 – Morning watering on Tue & Fri if dry
-- alias: "Zone 0 – Morning Watering (Tue & Fri, if dry)"
-  trigger:
-    platform: time
-    at: "06:00:00"
-  condition:
-    - condition: time
-      weekday: [ tue, fri ]
-    - condition: numeric_state
-      entity_id: sensor.rain_probability
-      below: 50
-  action:
-    - service: switch.turn_on
-      entity_id: switch.irrigation_zone_0
+1. Wire adapter TX -> ESP RXD0, RX -> TXD0, GND -> GND, 3.3 V -> VCC.
+   **The ESP-12F is 3.3 V only - 5 V will destroy it.** CH_PD/EN must be pulled high.
+2. Pull **GPIO0 to GND** (jumper, or hold the Flash/Boot button).
+3. While GPIO0 is held low, briefly pulse **RST** to GND and release.
+4. Keep GPIO0 grounded for the whole upload.
+5. When the upload finishes, release GPIO0 and tap RST again to boot normally.
 
-# Zone 0 – Stop watering (always)
-- alias: "Zone 0 – Stop Morning Watering (Tue & Fri)"
-  trigger:
-    platform: time
-    at: "06:30:00"
-  condition:
-    condition: time
-    weekday: [ tue, fri ]
-  action:
-    - service: switch.turn_off
-      entity_id: switch.irrigation_zone_0
-```
+## Broker configuration
 
-Repeat for Zone 1 and Zone 2, adjusting 'at:' times and days as needed, and including the same rain_probability check in the “on” automations.
-
-### Lovelace Dashboard
+The firmware authenticates, so the broker needs a matching login. For the Home
+Assistant Mosquitto add-on, under *Settings > Add-ons > Mosquitto broker >
+Configuration*:
 
 ```yaml
-type: entities
-title: Garden Irrigation
-entities:
-  - switch.irrigation_zone_0
-  - switch.irrigation_zone_1
-  - switch.irrigation_zone_2
-  - sensor.rain_probability
-  - weather.home_weather
+logins:
+  - username: irrigator
+    password: <a long random password>
 ```
 
-Now you have manual toggles, plus automated schedules on selected weekdays.
+Use the same values in `src/config.h`.
 
-## Future Plans
+> If the firmware connects **without** credentials, the broker log fills with
+> `received null username or password for unpwd check` followed by
+> `Client ESP8266Client-irrigator disconnected, not authorised`, and the zones
+> never respond. That log line is the fastest way to diagnose it.
 
-- **Plant Mood Detection™**: Snap a picture of your sad ferns and run them through a neural net. If they give you the stink eye, trigger an emergency sprinkling.
-- **Quantum Soil Moisture Sensor**: Uses Schrödinger’s moisture principle: the soil is both wet and dry until you observe it. More research needed.
-- **Interplanetary Irrigation**: When Mars colonization kicks off, automatically switch to red-dust-resistant nozzles and dust-storm mode. Earth mode still works if Elon sends you potable water.
-- **Astrological Alignment**: “Mercury in retrograde? Best hold off. Full moon in Leo? Water twice.” Because the cosmos knows best.
-- **Plant-GPT Integration**: Chat with your basil: “Hey Basil, you look thirsty. Would you like a drizzle or a deluge?” Basil: “Yes.”
-- **Ultimate Goal**: Replace roving sprinklers entirely. Let robots mounted on drones deliver a precisely calibrated droplet to each leaf—because why not?
+## Home Assistant integration
+
+Merge [`homeassistant/configuration.yaml`](homeassistant/configuration.yaml)
+into your own config. It provides:
+
+- three MQTT switches, `switch.irrigation_zone_0` / `_1` / `_2`
+- `input_select.irrigation_zone` - the single control surface
+- `sensor.rain_probability` - a template sensor built from the OpenWeatherMap
+  daily forecast
+- the exclusivity automation and the watering schedule
+
+Add the OpenWeatherMap integration through the UI *before* reloading, so the API
+key stays out of your config file.
+
+For the dashboard card, see
+[`homeassistant/lovelace-irrigation.yaml`](homeassistant/lovelace-irrigation.yaml).
+
+### How control flows
+
+```
+dashboard / schedule --> input_select.irrigation_zone
+                              |
+                              v
+                "Irrigation select exclusive"
+                              |
+                closes all 3, opens the chosen one
+                              |
+                              v
+                   switch.irrigation_zone_N
+                              |
+                       MQTT command_topic
+                              v
+                            ESP8266
+```
+
+Because everything routes through the selector, the dashboard always shows which
+zone is actually running.
+
+### Schedule
+
+| Zone | Name          | Days          | Window        |
+|------|---------------|---------------|---------------|
+| 1    | House front   | Tue, Thu, Sat | 02:11 - 02:48 |
+| 0    | Car side      | Tue, Sat      | 02:48 - 03:35 |
+| 2    | Street corner | Tue, Sat      | 03:35 - 05:20 |
+
+Each step hands over to the next. A zone only *starts* if rain probability is
+under 50%; the handover and the final 05:20 all-off run unconditionally, so a
+skipped condition can never leave a valve open. The 05:20 step also issues a
+direct `switch.turn_off` on all three zones as a fail-safe, independent of the
+selector.
+
+Rename the zones by editing the `options:` list of `input_select.irrigation_zone`
+and the matching `value_template` strings in the exclusivity automation.
+
+### Why OpenWeatherMap and not Met.no
+
+`sensor.rain_probability` is derived from `weather.openweathermap` because
+**Met.no does not expose `precipitation_probability`** - its forecasts only carry
+`precipitation` in mm. If you point the template sensor at a Met.no entity it
+will silently return 0 and you will water through every storm.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Broker log: `not authorised` | Firmware has no/incorrect MQTT credentials. Check `src/config.h`. |
+| Zones stuck at `unknown` in HA | The ESP is not publishing to `irrigation/statusN`. Commands still work; only feedback is missing. |
+| Scheduled watering never runs | `sensor.rain_probability` missing or non-numeric. A `numeric_state` condition against a missing entity always evaluates false, so the automation silently never fires. Check it in Developer tools > States. |
+| Valves invert | Relay board is active LOW; invert the `digitalWrite` calls. |
+| ESP reboots every 60 s | Hardware watchdog firing - something in `loop()` is blocking. |
+
+## Known gaps
+
+- **No state feedback.** The firmware subscribes to `irrigation/controlN` but
+  never publishes to `irrigation/statusN`, so Home Assistant shows commanded
+  state, not confirmed state. Publishing a retained message on each relay change
+  would close this loop.
+- **No soil moisture input** - watering is purely time and forecast driven.
+- **`retain: true`** on the command topics means the ESP replays the last command
+  on reconnect. Convenient, but a stale retained `on` will reopen a valve at boot.
+
+## Future plans
+
+- **Plant Mood Detection(TM)**: photograph the ferns, run them through a neural
+  net, trigger emergency sprinkling if they give you the stink eye.
+- **Quantum Soil Moisture Sensor**: the soil is both wet and dry until observed.
+  More research needed.
+- **Interplanetary Irrigation**: red-dust-resistant nozzles and dust-storm mode
+  for the Mars colony. Earth mode still works.
+- **Astrological Alignment**: Mercury in retrograde? Best hold off. Full moon in
+  Leo? Water twice.
+- **Plant-GPT**: "Hey Basil, you look thirsty. Drizzle or deluge?" Basil: "Yes."
