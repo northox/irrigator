@@ -6,3 +6,7 @@
 include
 lib
 test
+
+# Local credentials - never commit
+src/config.h
+secrets.yaml
