@@ -88,6 +88,10 @@ void setRelay(int idx, bool isOn) {
 void setupWIFI() {
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  // Modem sleep saves a few mA but stalls MQTT for seconds at a time and makes
+  // keepalives unreliable. A mains-powered valve controller does not need it.
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(ssid, password);
 
   const unsigned long deadline = millis() + 20000UL; // 20 s boot window
