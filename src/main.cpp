@@ -161,11 +161,12 @@ void publishDiagnostics(const char* why) {
   if (!mqttClient.connected()) return;
   char buf[160];
   snprintf(buf, sizeof(buf),
-           "%s reset=%s ip=%s rssi=%d uptime=%lus",
+           "%s reset=%s ip=%s rssi=%d heap=%u uptime=%lus",
            why,
            ESP.getResetReason().c_str(),
            WiFi.localIP().toString().c_str(),
            WiFi.RSSI(),
+           (unsigned)ESP.getFreeHeap(),
            millis() / 1000UL);
   mqttClient.publish(LOG_TOPIC, buf);
   Serial.println(buf);
