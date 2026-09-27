@@ -49,7 +49,6 @@ unsigned long lastHealthMs   = 0;
 unsigned long lastHeartbeatMs = 0;
 unsigned long wifiBackoff    = 3000UL;
 unsigned long lastOnlineMs   = 0;   // last moment WiFi + MQTT were both up
-unsigned int  wifiRetryCount = 0;
 
 unsigned long ledPatternStart = 0;
 
@@ -108,25 +107,14 @@ void setupWIFI() {
 }
 
 void ensureWIFI() {
-  if (WiFi.status() == WL_CONNECTED) { wifiRetryCount = 0; return; }
+  if (WiFi.status() == WL_CONNECTED) return;
 
-  wifiRetryCount++;
-  // WiFi.reconnect() alone can fail indefinitely if the station config has
-  // gone stale (AP changed channel, DHCP lease expired, association wedged).
-  // Every third attempt, tear it down and start from scratch instead.
-  const bool hardRetry = (wifiRetryCount % 3 == 0);
-
-  Serial.printf("WiFi down (attempt %u, %s). Retrying for %lu ms\n",
-                wifiRetryCount, hardRetry ? "full re-begin" : "reconnect", wifiBackoff);
-
-  if (hardRetry) {
-    WiFi.disconnect(true);
-    delay(100);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-  } else {
-    WiFi.reconnect();
-  }
+  // disconnect() + begin() is far more reliable than reconnect() once the AP
+  // has dropped us; reconnect() can fail indefinitely against a stale station
+  // config. Do it once, then wait - do not spam it.
+  Serial.printf("WiFi down. Retrying for %lu ms\n", wifiBackoff);
+  WiFi.disconnect();
+  WiFi.begin(ssid, password);
 
   const unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < wifiBackoff) {
@@ -138,7 +126,6 @@ void ensureWIFI() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("WiFi reconnected: "); Serial.println(WiFi.localIP());
     wifiBackoff = 2000UL;   // reset
-    wifiRetryCount = 0;
   } else {
     Serial.println("WiFi retry failed.");
     wifiBackoff = min(wifiBackoff * 2, MAX_BACKOFF); // exponential backoff
