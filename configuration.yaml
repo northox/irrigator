@@ -24,6 +24,7 @@ mqtt:
     - name: "Irrigation Zone 0"
       unique_id: irrigation_zone_0
       command_topic: "irrigation/control0"
+      availability_topic: "irrigation/availability"
       state_topic: "irrigation/status0"
       payload_on: "on"
       payload_off: "off"
@@ -35,6 +36,7 @@ mqtt:
     - name: "Irrigation Zone 1"
       unique_id: irrigation_zone_1
       command_topic: "irrigation/control1"
+      availability_topic: "irrigation/availability"
       state_topic: "irrigation/status1"
       payload_on: "on"
       payload_off: "off"
@@ -46,6 +48,7 @@ mqtt:
     - name: "Irrigation Zone 2"
       unique_id: irrigation_zone_2
       command_topic: "irrigation/control2"
+      availability_topic: "irrigation/availability"
       state_topic: "irrigation/status2"
       payload_on: "on"
       payload_off: "off"

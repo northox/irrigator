@@ -35,6 +35,12 @@ const char* STATUS_TOPIC[3]  = { "irrigation/status0",
                                  "irrigation/status2" };
 const char* LOG_TOPIC        = "irrigation/log";
 
+/* Last Will and Testament. The broker publishes "offline" here on our behalf
+ * if we stop answering keepalives, which is the only way Home Assistant can
+ * tell a dead controller from a quiet one. Retained, so the state survives an
+ * HA restart. Without this, a wedged controller looks perfectly healthy. */
+const char* AVAILABILITY_TOPIC = "irrigation/availability";
+
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
@@ -182,7 +188,8 @@ void ensureMQTT() {
   String cid = String("ESP8266Client-irrigator-") + String(ESP.getChipId(), HEX);
 
   for (int attempt = 0; attempt < 3 && !mqttClient.connected(); attempt++) {
-    mqttClient.connect(cid.c_str(), mqttUser, mqttPassword);
+    mqttClient.connect(cid.c_str(), mqttUser, mqttPassword,
+                       AVAILABILITY_TOPIC, 1, true, "offline");
     for (int k = 0; k < 10; k++) { mqttClient.loop(); yield(); delay(50); }
   }
 
@@ -192,6 +199,7 @@ void ensureMQTT() {
   }
 
   Serial.println("connected.");
+  mqttClient.publish(AVAILABILITY_TOPIC, "online", true);   // clears the will
   for (int i = 0; i < 3; i++) mqttClient.subscribe(CONTROL_TOPIC[i]);
 
   // Tell HA what the valves are actually doing, so the switches stop
